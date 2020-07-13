@@ -34,15 +34,16 @@ class Agent():
     
     def choose_action(self, observation):
         if np.random.random() > self.epsilon:
-            state = torch.tensor([observation]).to(self.model.device)
-            net_out = self.model.q_network.forward(state)
-            action = torch.argmax(net_out).item()
+            with torch.no_grad():
+                state = torch.tensor([observation]).to(self.model.device)
+                net_out = self.model.q_network.forward(state)
+                action = torch.argmax(net_out).item()
         else:
             action = np.random.choice(self.action_space)
         
         return action
     
-    def train(self):
+    def train(self, update_target_network):
         if self.memory_counter < self.model.batch_size:
             return
         
@@ -58,7 +59,7 @@ class Agent():
         
         train_batch = [batch_indices, batch_state, batch_new_state, batch_action, batch_reward, batch_done]
         
-        self.model.train(train_batch, self.gamma)
+        self.model.train(train_batch, self.gamma, update_target_network)
         
         self.epsilon = self.epsilon - self.epsilon_decay if self.epsilon > self.min_epsilon else self.min_epsilon
     
@@ -75,7 +76,7 @@ class Agent():
                 new_observation, reward, done, info = env.step(action)
                 score += reward
                 self.save_transition(observation, new_observation, action, reward, done)
-                self.train()
+                self.train(update_target_network=(done and (episode_ix+1) % self.model.target_update == 0))
                 observation = new_observation
             scores.append(score)
             print(f"Episode:{episode_ix+1},\tScore:{score:.2f},\tAvg. Score:{np.mean(scores[-window_size:]):.2f},\tEpsilon:{self.epsilon:.2f}")
