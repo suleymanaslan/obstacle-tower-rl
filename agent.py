@@ -34,10 +34,9 @@ class Agent():
     
     def choose_action(self, observation):
         if np.random.random() > self.epsilon:
-            with torch.no_grad():
-                state = torch.tensor([observation]).to(self.model.device)
-                net_out = self.model.q_network.forward(state)
-                action = torch.argmax(net_out).item()
+            state = torch.tensor([observation]).to(self.model.device)
+            _, advantage = self.model.online_network.forward(state)
+            action = torch.argmax(advantage).item()
         else:
             action = np.random.choice(self.action_space)
         
@@ -67,6 +66,7 @@ class Agent():
         env = gym.make("LunarLander-v2")
         
         scores = []
+        steps = 0
         for episode_ix in range(episodes):
             score = 0
             done = False
@@ -75,8 +75,9 @@ class Agent():
                 action = self.choose_action(observation)
                 new_observation, reward, done, info = env.step(action)
                 score += reward
+                steps += 1
                 self.save_transition(observation, new_observation, action, reward, done)
-                self.train(update_target_network=(done and (episode_ix+1) % self.model.target_update == 0))
+                self.train(update_target_network=(steps % self.model.target_update == 0))
                 observation = new_observation
             scores.append(score)
             print(f"Episode:{episode_ix+1},\tScore:{score:.2f},\tAvg. Score:{np.mean(scores[-window_size:]):.2f},\tEpsilon:{self.epsilon:.2f}")
