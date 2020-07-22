@@ -1,86 +1,87 @@
-import numpy as np
+# adapted from https://github.com/Kaixhin/Rainbow
+
 import torch
-import gym
+import torch.optim as optim
+from torch.nn.utils import clip_grad_norm_
+
+from network import DQN
 
 
 class Agent():
-    def __init__(self, model, input_size, action_size, gamma, epsilon, min_epsilon, epsilon_decay, memory_size):
-        self.gamma = gamma
-        self.epsilon = epsilon
-        self.action_space = [i for i in range(action_size)]
-        self.memory_size = memory_size
-        self.min_epsilon = min_epsilon
-        self.epsilon_decay = epsilon_decay
-        self.memory_counter = 0
+    def __init__(self, env, atoms, V_min, V_max, batch_size, multi_step, discount, norm_clip, lr, adam_eps, hidden_size, noisy_std):
+        self.device = torch.device("cuda:0")
+        self.action_size = len(env.action_space)
+        self.atoms = atoms
+        self.Vmin = V_min
+        self.Vmax = V_max
+        self.support = torch.linspace(self.Vmin, self.Vmax, self.atoms).to(self.device)
+        self.delta_z = (self.Vmax - self.Vmin) / (self.atoms - 1)
+        self.batch_size = batch_size
+        self.n = multi_step
+        self.discount = discount
+        self.norm_clip = norm_clip
         
-        self.model = model
+        self.online_net = DQN(self.atoms, self.action_size, env.window, hidden_size=256, noisy_std=0.1).to(self.device)
+        self.online_net.train()
         
-        self.state_memory = np.zeros((self.memory_size, input_size), dtype=np.float32)
-        self.new_state_memory = np.zeros((self.memory_size, input_size), dtype=np.float32)
-        self.action_memory = np.zeros(self.memory_size, dtype=np.int32)
-        self.reward_memory = np.zeros(self.memory_size, dtype=np.float32)
-        self.done_memory = np.zeros(self.memory_size, dtype=np.bool)
+        self.target_net = DQN(self.atoms, self.action_size, env.window, hidden_size=256, noisy_std=0.1).to(self.device)
+        self.update_target_net()
+        self.target_net.train()
+        
+        for param in self.target_net.parameters():
+            param.requires_grad = False
+        
+        self.optimizer = optim.Adam(self.online_net.parameters(), lr=lr, eps=adam_eps)
     
-    def save_transition(self, state, new_state, action, reward, done):
-        memory_ix = self.memory_counter % self.memory_size
-        
-        self.state_memory[memory_ix] = state
-        self.new_state_memory[memory_ix] = new_state
-        self.action_memory[memory_ix] = action
-        self.reward_memory[memory_ix] = reward
-        self.done_memory[memory_ix] = done
-        
-        self.memory_counter += 1
+    def train(self):
+        self.online_net.train()
     
-    def choose_action(self, observation):
-        if np.random.random() > self.epsilon:
-            state = torch.tensor([observation]).to(self.model.device)
-            _, advantage = self.model.online_network.forward(state)
-            action = torch.argmax(advantage).item()
-        else:
-            action = np.random.choice(self.action_space)
-        
-        return action
+    def eval(self):
+        self.online_net.eval()
     
-    def train(self, update_target_network):
-        if self.memory_counter < self.model.batch_size:
-            return
-        
-        available_memory = min(self.memory_counter, self.memory_size)
-        batch_ix = np.random.choice(available_memory, self.model.batch_size, replace=False)
-        batch_indices = np.arange(self.model.batch_size, dtype=np.int32)
-        
-        batch_state = torch.tensor(self.state_memory[batch_ix]).to(self.model.device)
-        batch_new_state = torch.tensor(self.new_state_memory[batch_ix]).to(self.model.device)
-        batch_action = self.action_memory[batch_ix]
-        batch_reward = torch.tensor(self.reward_memory[batch_ix]).to(self.model.device)
-        batch_done = torch.tensor(self.done_memory[batch_ix]).to(self.model.device)
-        
-        train_batch = [batch_indices, batch_state, batch_new_state, batch_action, batch_reward, batch_done]
-        
-        self.model.train(train_batch, self.gamma, update_target_network)
-        
-        self.epsilon = self.epsilon - self.epsilon_decay if self.epsilon > self.min_epsilon else self.min_epsilon
+    def update_target_net(self):
+        self.target_net.load_state_dict(self.online_net.state_dict())
     
-    def start_training(self, episodes, window_size):
-        env = gym.make("LunarLander-v2")
+    def reset_noise(self):
+        self.online_net.reset_noise()
+    
+    def act(self, observation):
+        with torch.no_grad():
+            return (self.online_net(observation.unsqueeze(0)) * self.support).sum(2).argmax(1).item()
+    
+    def act_e_greedy(self, state, epsilon=0.001):
+        return np.random.randint(0, self.action_size) if np.random.random() < epsilon else self.act(state)
+    
+    def learn(self, mem):
+        idxs, states, actions, returns, next_states, nonterminals, weights = mem.sample(self.batch_size)
         
-        scores = []
-        steps = 0
-        for episode_ix in range(episodes):
-            score = 0
-            done = False
-            observation = env.reset()
-            while not done:
-                action = self.choose_action(observation)
-                new_observation, reward, done, info = env.step(action)
-                score += reward
-                steps += 1
-                self.save_transition(observation, new_observation, action, reward, done)
-                self.train(update_target_network=(steps % self.model.target_update == 0))
-                observation = new_observation
-            scores.append(score)
-            print(f"Episode:{episode_ix+1},\tScore:{score:.2f},\tAvg. Score:{np.mean(scores[-window_size:]):.2f},\tEpsilon:{self.epsilon:.2f}")
-        avg_scores = [np.mean(scores[max(0, i-window_size):i+1]) for i in range(len(scores))]
+        log_ps = self.online_net(states, use_log_softmax=True)
+        log_ps_a = log_ps[range(self.batch_size), actions]
+        
+        with torch.no_grad():
+            pns = self.online_net(next_states)
+            dns = self.support.expand_as(pns) * pns
+            argmax_indices_ns = dns.sum(2).argmax(1)
+            self.target_net.reset_noise()
+            pns = self.target_net(next_states)
+            pns_a = pns[range(self.batch_size), argmax_indices_ns]
             
-        return scores, avg_scores
+            Tz = returns.unsqueeze(1) + nonterminals * (self.discount ** self.n) * self.support.unsqueeze(0)
+            Tz = Tz.clamp(min=self.Vmin, max=self.Vmax)
+            b = (Tz - self.Vmin) / self.delta_z
+            l, u = b.floor().to(torch.int64), b.ceil().to(torch.int64)
+            l[(u > 0) * (l == u)] -= 1
+            u[(l < (self.atoms - 1)) * (l == u)] += 1
+            
+            m = states.new_zeros(self.batch_size, self.atoms)
+            offset = torch.linspace(0, ((self.batch_size - 1) * self.atoms), self.batch_size).unsqueeze(1).expand(self.batch_size, self.atoms).to(actions)
+            m.view(-1).index_add_(0, (l + offset).view(-1), (pns_a * (u.float() - b)).view(-1))
+            m.view(-1).index_add_(0, (u + offset).view(-1), (pns_a * (b - l.float())).view(-1))
+        
+        loss = -torch.sum(m * log_ps_a, 1)
+        self.online_net.zero_grad()
+        (weights * loss).mean().backward()
+        clip_grad_norm_(self.online_net.parameters(), self.norm_clip)
+        self.optimizer.step()
+        
+        mem.update_priorities(idxs, loss.detach().cpu().numpy())
