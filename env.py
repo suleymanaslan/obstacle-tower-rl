@@ -23,19 +23,30 @@ class Env():
     def _process_observation(self, observation):
         observation = cv2.cvtColor(cv2.resize(observation["pixels"], (84, 84), interpolation=cv2.INTER_AREA), cv2.COLOR_RGB2GRAY)
         observation = torch.tensor(observation, dtype=torch.float32, device=self.device).div_(255)
-        self.state_buffer.append(observation)
-        return torch.stack(list(self.state_buffer), 0)
+        return observation
     
     def reset(self):
         self._reset_buffer()
         observation = self.wrapped_env.reset()
         observation = self._process_observation(observation)
-        return observation
+        self.state_buffer.append(observation)
+        return torch.stack(list(self.state_buffer), 0)
     
     def close(self):
         self.wrapped_env.close()
     
     def step(self, action):
-        observation, reward, done, info = self.wrapped_env.step(action)
-        observation = self._process_observation(observation)
-        return observation, reward, done, info
+        frame_buffer = torch.zeros(2, 84, 84, device=self.device)
+        reward = 0
+        for t in range(4):
+            observation_t, reward_t, done, info = self.wrapped_env.step(action)
+            reward += reward_t
+            if t == 2:
+                frame_buffer[0] = self._process_observation(observation_t)
+            elif t == 3:
+                frame_buffer[1] = self._process_observation(observation_t)
+            if done:
+                break
+        observation = frame_buffer.max(0)[0]
+        self.state_buffer.append(observation)
+        return torch.stack(list(self.state_buffer), 0), reward, done, info
