@@ -1,5 +1,6 @@
 # adapted from https://github.com/Kaixhin/Rainbow
 
+import numpy as np
 import torch
 import torch.optim as optim
 from torch.nn.utils import clip_grad_norm_
@@ -8,7 +9,7 @@ from network import DQN
 
 
 class Agent():
-    def __init__(self, env, atoms, V_min, V_max, batch_size, multi_step, discount, norm_clip, lr, adam_eps, hidden_size, noisy_std):
+    def __init__(self, env, atoms, V_min, V_max, batch_size, multi_step, discount, norm_clip, lr, adam_eps, hidden_size, noisy_std, eps_decay, min_epsilon):
         self.device = torch.device("cuda:0")
         self.action_size = len(env.action_space)
         self.atoms = atoms
@@ -20,6 +21,9 @@ class Agent():
         self.n = multi_step
         self.discount = discount
         self.norm_clip = norm_clip
+        self.epsilon = 1.0
+        self.eps_decay = eps_decay
+        self.min_epsilon = min_epsilon
         
         self.online_net = DQN(self.atoms, self.action_size, env.window, hidden_size=256, noisy_std=0.1).to(self.device)
         self.online_net.train()
@@ -49,8 +53,12 @@ class Agent():
         with torch.no_grad():
             return (self.online_net(observation.unsqueeze(0)) * self.support).sum(2).argmax(1).item()
     
-    def act_e_greedy(self, state, epsilon=0.001):
-        return np.random.randint(0, self.action_size) if np.random.random() < epsilon else self.act(state)
+    def act_e_greedy(self, state):
+        action = np.random.randint(0, self.action_size) if np.random.random() < self.epsilon else self.act(state)
+        self.epsilon -= self.eps_decay
+        if self.epsilon < self.min_epsilon:
+            self.epsilon = self.min_epsilon
+        return action
     
     def learn(self, mem):
         idxs, states, actions, returns, next_states, nonterminals, weights = mem.sample(self.batch_size)

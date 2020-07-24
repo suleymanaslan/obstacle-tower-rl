@@ -38,15 +38,18 @@ class Env():
     def step(self, action):
         frame_buffer = torch.zeros(2, 84, 84, device=self.device)
         reward = 0
+        steps = 0
         for t in range(4):
             observation_t, reward_t, done, info = self.wrapped_env.step(action)
             reward += reward_t
+            steps += 1
             if t == 2:
                 frame_buffer[0] = self._process_observation(observation_t)
             elif t == 3:
                 frame_buffer[1] = self._process_observation(observation_t)
             if done:
                 break
+        reward /= steps
         observation = frame_buffer.max(0)[0]
         self.state_buffer.append(observation)
         return torch.stack(list(self.state_buffer), 0), reward, done, info
