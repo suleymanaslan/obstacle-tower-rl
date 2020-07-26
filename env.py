@@ -56,7 +56,7 @@ class Env():
         return torch.stack(list(self.state_buffer), 0), reward, done, info
 
 
-class SimpleEnv():
+class SimpleEnvVisual():
     def __init__(self, action_size):
         self.wrapped_env = PixelObservationWrapper(gym.make("LunarLander-v2"), pixels_only=True)
         self.action_space = [i for i in range(action_size)]
@@ -78,3 +78,18 @@ class SimpleEnv():
         observation, reward, done, info = self.wrapped_env.step(action)
         observation = self._process_observation(observation)
         return observation, reward, done, info
+
+
+class SimpleEnv():
+    def __init__(self, action_size):
+        self.env = gym.make("LunarLander-v2")
+        self.action_space = [i for i in range(action_size)]
+    
+    def reset(self):
+        return self.env.reset()
+    
+    def close(self):
+        self.env.close()
+    
+    def step(self, action):
+        return self.env.step(action)

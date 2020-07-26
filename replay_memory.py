@@ -125,7 +125,7 @@ class ReplayMemory():
         [self.transitions.update(idx, priority) for idx, priority in zip(idxs, priorities)]
 
 
-class SimpleReplayMemory():
+class SimpleReplayMemoryVisual():
     def __init__(self, capacity):
         self.device = torch.device("cuda:0")
         self.capacity = capacity
@@ -145,6 +145,42 @@ class SimpleReplayMemory():
         self.new_state_memory[memory_ix] = new_state
         self.counter += 1
         
+    def sample(self, batch_size):
+        available_memory = min(self.counter, self.capacity)
+        batch_ix = np.random.choice(available_memory, batch_size, replace=False)
+        batch_indices = np.arange(batch_size, dtype=np.int32)
+        
+        batch_state = torch.tensor(self.state_memory[batch_ix]).to(self.device)
+        batch_action = self.action_memory[batch_ix]
+        batch_reward = torch.tensor(self.reward_memory[batch_ix]).to(self.device)
+        batch_done = torch.tensor(self.done_memory[batch_ix]).to(self.device)
+        batch_new_state = torch.tensor(self.new_state_memory[batch_ix]).to(self.device)
+        
+        train_batch = [batch_indices, batch_state, batch_action, batch_reward, batch_done, batch_new_state]
+        
+        return train_batch
+
+
+class SimpleReplayMemory():
+    def __init__(self, capacity, input_size):
+        self.device = torch.device("cuda:0")
+        self.capacity = capacity
+        self.counter = 0
+        self.state_memory = np.zeros((self.capacity, input_size), dtype=np.float32)
+        self.action_memory = np.zeros(self.capacity, dtype=np.int32)
+        self.reward_memory = np.zeros(self.capacity, dtype=np.float32)
+        self.done_memory = np.zeros(self.capacity, dtype=np.bool)
+        self.new_state_memory = np.zeros((self.capacity, input_size), dtype=np.float32)
+    
+    def append(self, state, action, reward, done, new_state):
+        memory_ix = self.counter % self.capacity
+        self.state_memory[memory_ix] = state
+        self.action_memory[memory_ix] = action
+        self.reward_memory[memory_ix] = reward
+        self.done_memory[memory_ix] = done
+        self.new_state_memory[memory_ix] = new_state
+        self.counter += 1
+    
     def sample(self, batch_size):
         available_memory = min(self.counter, self.capacity)
         batch_ix = np.random.choice(available_memory, batch_size, replace=False)

@@ -81,9 +81,9 @@ class DQN(nn.Module):
         self.fc_z_a.reset_noise()
 
 
-class SimpleDQN(nn.Module):
+class SimpleDQNVisual(nn.Module):
     def __init__(self, action_size, hidden_size):
-        super(SimpleDQN, self).__init__()
+        super(SimpleDQNVisual, self).__init__()
         self.action_size = action_size
         self.convs = nn.Sequential(nn.Conv2d(1, 32, 8, stride=4, padding=0), nn.ReLU(),
                                    nn.Conv2d(32, 64, 4, stride=2, padding=0), nn.ReLU(),
@@ -99,6 +99,20 @@ class SimpleDQN(nn.Module):
         x = self.convs(x)
         x = x.view(-1, self.conv_output_size)
         
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        actions = self.fc3(x)
+        return actions
+
+
+class SimpleDQN(nn.Module):
+    def __init__(self, input_size, hidden_size, action_size):
+        super(SimpleDQN, self).__init__()   
+        self.fc1 = nn.Linear(input_size, hidden_size)
+        self.fc2 = nn.Linear(hidden_size, hidden_size)
+        self.fc3 = nn.Linear(hidden_size, action_size)
+    
+    def forward(self, x):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         actions = self.fc3(x)
