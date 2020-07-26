@@ -81,15 +81,46 @@ class SimpleEnvVisual():
 
 
 class SimpleEnv():
-    def __init__(self, action_size):
+    def __init__(self, action_size, history_length):
+        self.device = torch.device("cuda:0")
         self.env = gym.make("LunarLander-v2")
         self.action_space = [i for i in range(action_size)]
+        self.window = history_length
+        self.state_buffer = deque([], maxlen=self.window)
+        
+    def _reset_buffer(self):
+        for _ in range(self.window):
+            self.state_buffer.append(torch.zeros(8, device=self.device))
+            
+    def _process_observation(self, observation):
+        observation = torch.tensor(observation, dtype=torch.float32, device=self.device)
+        return observation
     
     def reset(self):
-        return self.env.reset()
+        self._reset_buffer()
+        observation = self.env.reset()
+        observation = self._process_observation(observation)
+        self.state_buffer.append(observation)
+        return torch.stack(list(self.state_buffer), 0)
     
     def close(self):
         self.env.close()
     
     def step(self, action):
-        return self.env.step(action)
+        frame_buffer = torch.zeros(2, 8, device=self.device)
+        reward = 0
+        steps = 0
+        for t in range(4):
+            observation_t, reward_t, done, info = self.env.step(action)
+            reward += reward_t
+            steps += 1
+            if t == 2:
+                frame_buffer[0] = self._process_observation(observation_t)
+            elif t == 3:
+                frame_buffer[1] = self._process_observation(observation_t)
+            if done:
+                break
+        reward /= steps
+        observation = frame_buffer.max(0)[0]
+        self.state_buffer.append(observation)
+        return torch.stack(list(self.state_buffer), 0), reward, done, info

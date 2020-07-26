@@ -106,14 +106,34 @@ class SimpleDQNVisual(nn.Module):
 
 
 class SimpleDQN(nn.Module):
-    def __init__(self, input_size, hidden_size, action_size):
-        super(SimpleDQN, self).__init__()   
-        self.fc1 = nn.Linear(input_size, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, hidden_size)
-        self.fc3 = nn.Linear(hidden_size, action_size)
+    def __init__(self, atoms, input_size, history_length, hidden_size, action_size, noisy_std):
+        super(SimpleDQN, self).__init__()
+        self.atoms = atoms
+        self.hidden_size = hidden_size
+        self.action_size = action_size
+        
+        self.fcs = nn.Sequential(nn.Linear(input_size * history_length, self.hidden_size), nn.ReLU(),
+                                 nn.Linear(self.hidden_size, self.hidden_size), nn.ReLU())
+        
+        self.fc_h_v = NoisyLinear(self.hidden_size, self.hidden_size, std_init=noisy_std)
+        self.fc_h_a = NoisyLinear(self.hidden_size, self.hidden_size, std_init=noisy_std)
+        self.fc_z_v = NoisyLinear(self.hidden_size, self.atoms, std_init=noisy_std)
+        self.fc_z_a = NoisyLinear(self.hidden_size, self.action_size * self.atoms, std_init=noisy_std)
     
-    def forward(self, x):
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        actions = self.fc3(x)
-        return actions
+    def forward(self, x, use_log_softmax=False):
+        x = self.fcs(x)
+        x = x.view(-1, self.hidden_size)
+        
+        v = self.fc_z_v(F.relu(self.fc_h_v(x)))
+        a = self.fc_z_a(F.relu(self.fc_h_a(x)))
+        v, a = v.view(-1, 1, self.atoms), a.view(-1, self.action_size, self.atoms)
+        q = v + a - a.mean(1, keepdim=True)
+        q = F.log_softmax(q, dim=2) if use_log_softmax else F.softmax(q, dim=2)
+        
+        return q
+    
+    def reset_noise(self):
+        self.fc_h_v.reset_noise()
+        self.fc_h_a.reset_noise()
+        self.fc_z_v.reset_noise()
+        self.fc_z_a.reset_noise()
