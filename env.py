@@ -5,6 +5,7 @@ import random
 import torch
 import cv2
 import gym
+import numpy as np
 from gym.wrappers.pixel_observation import PixelObservationWrapper
 
 
@@ -53,3 +54,27 @@ class Env():
         observation = frame_buffer.max(0)[0]
         self.state_buffer.append(observation)
         return torch.stack(list(self.state_buffer), 0), reward, done, info
+
+
+class SimpleEnv():
+    def __init__(self, action_size):
+        self.wrapped_env = PixelObservationWrapper(gym.make("LunarLander-v2"), pixels_only=True)
+        self.action_space = [i for i in range(action_size)]
+    
+    def _process_observation(self, observation):
+        observation = cv2.cvtColor(cv2.resize(observation["pixels"], (84, 84), interpolation=cv2.INTER_AREA), cv2.COLOR_RGB2GRAY)
+        observation = np.expand_dims((observation / 255.0).astype(np.float32), axis=0)
+        return observation
+    
+    def reset(self):
+        observation = self.wrapped_env.reset()
+        observation = self._process_observation(observation)
+        return observation
+    
+    def close(self):
+        self.wrapped_env.close()
+    
+    def step(self, action):
+        observation, reward, done, info = self.wrapped_env.step(action)
+        observation = self._process_observation(observation)
+        return observation, reward, done, info
