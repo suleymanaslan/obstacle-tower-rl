@@ -6,7 +6,7 @@ import torch.optim as optim
 import torch.nn as nn
 from torch.nn.utils import clip_grad_norm_
 
-from network import DQN, SimpleDQN
+from network import DQN
 
 
 class Agent():
@@ -96,57 +96,6 @@ class Agent():
         mem.update_priorities(idxs, loss.detach().cpu().numpy())
 
 
-class SimpleAgentVisual():
-    def __init__(self, env, batch_size, discount, lr, hidden_size, eps_decay, min_epsilon):
-        self.device = torch.device("cuda:0")
-        self.action_size = len(env.action_space)
-        self.batch_size = batch_size
-        self.discount = discount
-        self.epsilon = 1.0
-        self.eps_decay = eps_decay
-        self.min_epsilon = min_epsilon
-        
-        self.online_net = SimpleDQN(self.action_size, hidden_size=hidden_size).to(self.device)
-        self.online_net.train()
-        
-        self.target_net = SimpleDQN(self.action_size, hidden_size=hidden_size).to(self.device)
-        self.update_target_net()
-        self.target_net.train()
-        
-        self.loss = nn.MSELoss()
-        self.optimizer = optim.Adam(self.online_net.parameters(), lr=lr)
-    
-    def update_target_net(self):
-        self.target_net.load_state_dict(self.online_net.state_dict())
-        
-    def act(self, state):
-        with torch.no_grad():
-            state = torch.tensor(state).to(self.device)
-            return torch.argmax(self.online_net(state.unsqueeze(0))).item()
-        
-    def act_e_greedy(self, state):
-        action = np.random.randint(0, self.action_size) if np.random.random() < self.epsilon else self.act(state)
-        self.epsilon -= self.eps_decay
-        if self.epsilon < self.min_epsilon:
-            self.epsilon = self.min_epsilon
-        return action
-
-    def learn(self, mem):
-        if mem.counter < self.batch_size:
-            return
-        batch_indices, batch_state, batch_action, batch_reward, batch_done, batch_new_state = mem.sample(self.batch_size)
-        self.optimizer.zero_grad()
-        
-        q_eval = self.online_net(batch_state)[batch_indices, batch_action]
-        q_next = self.target_net(batch_new_state)
-        q_next[batch_done] = 0.0
-        
-        q_target = batch_reward + self.discount * torch.max(q_next, dim=1)[0]
-        loss = self.loss(q_target, q_eval).to(self.device)
-        loss.backward()
-        self.optimizer.step()
-
-
 class SimpleAgent():
     def __init__(self, env, atoms, V_min, V_max, batch_size, multi_step, discount, norm_clip, lr, adam_eps, input_size, hidden_size, noisy_std, eps_decay, min_epsilon):
         self.device = torch.device("cuda:0")
@@ -164,10 +113,10 @@ class SimpleAgent():
         self.eps_decay = eps_decay
         self.min_epsilon = min_epsilon
         
-        self.online_net = SimpleDQN(self.atoms, input_size, env.window, hidden_size, self.action_size, noisy_std=0.1).to(self.device)
+        self.online_net = DQN(self.atoms, self.action_size, env.window, hidden_size, noisy_std=0.1, pixel_obs=False, input_size=input_size).to(self.device)
         self.online_net.train()
         
-        self.target_net = SimpleDQN(self.atoms, input_size, env.window, hidden_size, self.action_size, noisy_std=0.1).to(self.device)
+        self.target_net = DQN(self.atoms, self.action_size, env.window, hidden_size, noisy_std=0.1, pixel_obs=False, input_size=input_size).to(self.device)
         self.update_target_net()
         self.target_net.train()
         

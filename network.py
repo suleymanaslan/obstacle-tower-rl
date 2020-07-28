@@ -46,83 +46,30 @@ class NoisyLinear(nn.Module):
 
 
 class DQN(nn.Module):
-    def __init__(self, atoms, action_size, history_length, hidden_size, noisy_std):
+    def __init__(self, atoms, action_size, history_length, hidden_size, noisy_std, pixel_obs=True, input_size=None):
         super(DQN, self).__init__()
         self.atoms = atoms
         self.action_size = action_size
-        
-        self.convs = nn.Sequential(nn.Conv2d(history_length, 32, 8, stride=4, padding=0), nn.ReLU(),
-                                   nn.Conv2d(32, 64, 4, stride=2, padding=0), nn.ReLU(),
-                                   nn.Conv2d(64, 64, 3, stride=1, padding=0), nn.ReLU())
-        
-        self.conv_output_size = 3136
-        
-        self.fc_h_v = NoisyLinear(self.conv_output_size, hidden_size, std_init=noisy_std)
-        self.fc_h_a = NoisyLinear(self.conv_output_size, hidden_size, std_init=noisy_std)
-        self.fc_z_v = NoisyLinear(hidden_size, self.atoms, std_init=noisy_std)
-        self.fc_z_a = NoisyLinear(hidden_size, self.action_size * self.atoms, std_init=noisy_std)
-    
-    def forward(self, x, use_log_softmax=False):
-        x = self.convs(x)
-        x = x.view(-1, self.conv_output_size)
-        
-        v = self.fc_z_v(F.relu(self.fc_h_v(x)))
-        a = self.fc_z_a(F.relu(self.fc_h_a(x)))
-        v, a = v.view(-1, 1, self.atoms), a.view(-1, self.action_size, self.atoms)
-        q = v + a - a.mean(1, keepdim=True)
-        q = F.log_softmax(q, dim=2) if use_log_softmax else F.softmax(q, dim=2)
-        
-        return q
-    
-    def reset_noise(self):
-        self.fc_h_v.reset_noise()
-        self.fc_h_a.reset_noise()
-        self.fc_z_v.reset_noise()
-        self.fc_z_a.reset_noise()
-
-
-class SimpleDQNVisual(nn.Module):
-    def __init__(self, action_size, hidden_size):
-        super(SimpleDQNVisual, self).__init__()
-        self.action_size = action_size
-        self.convs = nn.Sequential(nn.Conv2d(1, 32, 8, stride=4, padding=0), nn.ReLU(),
-                                   nn.Conv2d(32, 64, 4, stride=2, padding=0), nn.ReLU(),
-                                   nn.Conv2d(64, 64, 3, stride=1, padding=0), nn.ReLU())
-        
-        self.conv_output_size = 3136
-        
-        self.fc1 = nn.Linear(self.conv_output_size, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, hidden_size)
-        self.fc3 = nn.Linear(hidden_size, self.action_size)
-
-    def forward(self, x):
-        x = self.convs(x)
-        x = x.view(-1, self.conv_output_size)
-        
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        actions = self.fc3(x)
-        return actions
-
-
-class SimpleDQN(nn.Module):
-    def __init__(self, atoms, input_size, history_length, hidden_size, action_size, noisy_std):
-        super(SimpleDQN, self).__init__()
-        self.atoms = atoms
         self.hidden_size = hidden_size
-        self.action_size = action_size
         
-        self.fcs = nn.Sequential(nn.Linear(input_size * history_length, self.hidden_size), nn.ReLU(),
-                                 nn.Linear(self.hidden_size, self.hidden_size), nn.ReLU())
+        if pixel_obs:
+            self.net = nn.Sequential(nn.Conv2d(history_length, 32, 8, stride=4, padding=0), nn.ReLU(),
+                                     nn.Conv2d(32, 64, 4, stride=2, padding=0), nn.ReLU(),
+                                     nn.Conv2d(64, 64, 3, stride=1, padding=0), nn.ReLU())
+            self.feat_size = 3136
+        else:
+            self.net = nn.Sequential(nn.Linear(input_size * history_length, self.hidden_size), nn.ReLU(),
+                                     nn.Linear(self.hidden_size, self.hidden_size), nn.ReLU())
+            self.feat_size = self.hidden_size
         
-        self.fc_h_v = NoisyLinear(self.hidden_size, self.hidden_size, std_init=noisy_std)
-        self.fc_h_a = NoisyLinear(self.hidden_size, self.hidden_size, std_init=noisy_std)
+        self.fc_h_v = NoisyLinear(self.feat_size, self.hidden_size, std_init=noisy_std)
+        self.fc_h_a = NoisyLinear(self.feat_size, self.hidden_size, std_init=noisy_std)
         self.fc_z_v = NoisyLinear(self.hidden_size, self.atoms, std_init=noisy_std)
         self.fc_z_a = NoisyLinear(self.hidden_size, self.action_size * self.atoms, std_init=noisy_std)
     
     def forward(self, x, use_log_softmax=False):
-        x = self.fcs(x)
-        x = x.view(-1, self.hidden_size)
+        x = self.net(x)
+        x = x.view(-1, self.feat_size)
         
         v = self.fc_z_v(F.relu(self.fc_h_v(x)))
         a = self.fc_z_a(F.relu(self.fc_h_a(x)))
