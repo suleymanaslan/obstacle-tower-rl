@@ -6,13 +6,15 @@ import torch.optim as optim
 import torch.nn as nn
 from torch.nn.utils import clip_grad_norm_
 
-from network import DQN
+from network import DQN, SimpleDQN
 
 
 class Agent():
-    def __init__(self, env, atoms, V_min, V_max, batch_size, multi_step, discount, norm_clip, lr, adam_eps, hidden_size, noisy_std, pixel_obs=True, input_size=None):
+    def __init__(self, env, atoms, V_min, V_max, batch_size, multi_step, discount, norm_clip, lr, adam_eps, hidden_size, noisy_std):
         self.device = torch.device("cuda:0")
-        self.action_size = len(env.action_space)
+        self.env = env
+        self.action_size = len(self.env.action_space)
+        self.hidden_size = hidden_size
         self.atoms = atoms
         self.Vmin = V_min
         self.Vmax = V_max
@@ -22,14 +24,8 @@ class Agent():
         self.n = multi_step
         self.discount = discount
         self.norm_clip = norm_clip
-        self.pixel_obs = pixel_obs
         
-        if self.pixel_obs:
-            self.online_net = DQN(self.atoms, self.action_size, env.window, hidden_size, noisy_std=0.1).to(self.device)
-            self.target_net = DQN(self.atoms, self.action_size, env.window, hidden_size, noisy_std=0.1).to(self.device)
-        else:
-            self.online_net = DQN(self.atoms, self.action_size, env.window, hidden_size, noisy_std=0.1, pixel_obs=self.pixel_obs, input_size=input_size).to(self.device)
-            self.target_net = DQN(self.atoms, self.action_size, env.window, hidden_size, noisy_std=0.1, pixel_obs=self.pixel_obs, input_size=input_size).to(self.device)
+        self.online_net, self.target_net = self._get_nets()
         
         self.online_net.train()
         self.update_target_net()
@@ -39,6 +35,11 @@ class Agent():
             param.requires_grad = False
         
         self.optimizer = optim.Adam(self.online_net.parameters(), lr=lr, eps=adam_eps)
+    
+    def _get_nets(self):
+        online_net = DQN(self.atoms, self.action_size, self.env.window, self.hidden_size, noisy_std=0.1).to(self.device)
+        target_net = DQN(self.atoms, self.action_size, self.env.window, self.hidden_size, noisy_std=0.1).to(self.device)
+        return online_net, target_net
     
     def train(self):
         self.online_net.train()
@@ -51,26 +52,27 @@ class Agent():
     
     def reset_noise(self):
         self.online_net.reset_noise()
+        
+    def _act(self, state):
+        with torch.no_grad():
+            return (self.online_net(state.unsqueeze(0)) * self.support).sum(2).argmax(1).item()
     
     def act(self, state):
-        with torch.no_grad():
-            return (self.online_net(state.unsqueeze(0) if self.pixel_obs else state.flatten().unsqueeze(0)) * self.support).sum(2).argmax(1).item()
+        return self._act(state)
     
     def act_e_greedy(self, state, epsilon=0.001):
         return np.random.randint(0, self.action_size) if np.random.random() < epsilon else self.act(state)
     
-    def learn(self, mem):
-        idxs, states, actions, returns, next_states, nonterminals, weights = mem.sample(self.batch_size)
-        
-        log_ps = self.online_net(states if self.pixel_obs else states.view(self.batch_size, -1), use_log_softmax=True)
+    def _learn(self, mem, idxs, states, actions, returns, next_states, nonterminals, weights):
+        log_ps = self.online_net(states, use_log_softmax=True)
         log_ps_a = log_ps[range(self.batch_size), actions]
         
         with torch.no_grad():
-            pns = self.online_net(next_states if self.pixel_obs else next_states.view(self.batch_size, -1))
+            pns = self.online_net(next_states)
             dns = self.support.expand_as(pns) * pns
             argmax_indices_ns = dns.sum(2).argmax(1)
             self.target_net.reset_noise()
-            pns = self.target_net(next_states if self.pixel_obs else next_states.view(self.batch_size, -1))
+            pns = self.target_net(next_states)
             pns_a = pns[range(self.batch_size), argmax_indices_ns]
             
             Tz = returns.unsqueeze(1) + nonterminals * (self.discount ** self.n) * self.support.unsqueeze(0)
@@ -90,5 +92,25 @@ class Agent():
         (weights * loss).mean().backward()
         clip_grad_norm_(self.online_net.parameters(), self.norm_clip)
         self.optimizer.step()
-        
         mem.update_priorities(idxs, loss.detach().cpu().numpy())
+    
+    def learn(self, mem):
+        idxs, states, actions, returns, next_states, nonterminals, weights = mem.sample(self.batch_size)
+        self._learn(mem, idxs, states, actions, returns, next_states, nonterminals, weights)
+
+
+class SimpleAgent(Agent):
+    def __init__(self, env, atoms, V_min, V_max, batch_size, multi_step, discount, norm_clip, lr, adam_eps, hidden_size, noisy_std):
+        super(SimpleAgent, self).__init__(env, atoms, V_min, V_max, batch_size, multi_step, discount, norm_clip, lr, adam_eps, hidden_size, noisy_std)
+    
+    def _get_nets(self):
+        online_net = SimpleDQN(self.atoms, self.action_size, self.env.window, self.hidden_size, noisy_std=0.1).to(self.device)
+        target_net = SimpleDQN(self.atoms, self.action_size, self.env.window, self.hidden_size, noisy_std=0.1).to(self.device)
+        return online_net, target_net
+    
+    def act(self, state):
+        return self._act(state.flatten())
+    
+    def learn(self, mem):
+        idxs, states, actions, returns, next_states, nonterminals, weights = mem.sample(self.batch_size)
+        self._learn(mem, idxs, states.view(self.batch_size, -1), actions, returns, next_states.view(self.batch_size, -1), nonterminals, weights)
