@@ -125,4 +125,5 @@ dmypy.json
 .pyre/
 
 obstacle-tower-env/
+trained_models/
 outputs/

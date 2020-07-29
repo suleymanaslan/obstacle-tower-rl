@@ -47,6 +47,10 @@ class Agent():
     def eval(self):
         self.online_net.eval()
     
+    def save(self, save_dir):
+        torch.save(self.online_net.state_dict(), f"{save_dir}/online_net.pth")
+        torch.save(self.target_net.state_dict(), f"{save_dir}/target_net.pth")
+    
     def update_target_net(self):
         self.target_net.load_state_dict(self.online_net.state_dict())
     
