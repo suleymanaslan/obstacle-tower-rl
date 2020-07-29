@@ -52,7 +52,7 @@ class Agent():
     
     def reset_noise(self):
         self.online_net.reset_noise()
-        
+    
     def _act(self, state):
         with torch.no_grad():
             return (self.online_net(state.unsqueeze(0)) * self.support).sum(2).argmax(1).item()
