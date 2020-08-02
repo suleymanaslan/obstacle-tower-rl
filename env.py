@@ -46,10 +46,12 @@ class Env():
     def close(self):
         self.wrapped_env.close()
     
-    def _step(self, action, frame_buffer):
+    def _step(self, action, frame_buffer, render=False):
         reward = 0
         for t in range(4):
             observation_t, reward_t, done, info = self.wrapped_env.step(action)
+            if render:
+                self.render()
             reward += reward_t
             if t == 2:
                 frame_buffer[0] = self._process_observation(observation_t)
@@ -103,18 +105,17 @@ class ObstacleTowerEnv(Env):
     def floor(self, floor):
         self.wrapped_env.floor(floor)
     
-    def action6_to_mda(self, action):
-        movement = action // 3
-        cam_rot = action % 3
-        jump = 0
-        turn = 0
-        return np.array([movement, cam_rot, jump, turn])
-    
-    def action_to_mda(self, action):
-        movement = action // 18
-        cam_rot = (action // 6) % 3
-        jump = (action // 3) % 2
-        turn = action % 3
+    def action_to_mda(self, action, simple_action=False):
+        if simple_action:
+            movement = action // 3
+            cam_rot = action % 3
+            jump = 0
+            turn = 0
+        else:
+            movement = action // 18
+            cam_rot = (action // 6) % 3
+            jump = (action // 3) % 2
+            turn = action % 3
         return np.array([movement, cam_rot, jump, turn])
     
     def mda_to_discrete(self, mda):
@@ -126,36 +127,10 @@ class ObstacleTowerEnv(Env):
         display.display(Image.fromarray(render_img))
         time.sleep(1/60)
     
-    def _rendered_step(self, action, frame_buffer):
-        reward = 0
-        for t in range(4):
-            observation_t, reward_t, done, info = self.wrapped_env.step(action)
-            self.render()
-            reward += reward_t
-            if t == 2:
-                frame_buffer[0] = self._process_observation(observation_t)
-            elif t == 3:
-                frame_buffer[1] = self._process_observation(observation_t)
-            if done:
-                break
-        observation = frame_buffer.max(0)[0]
-        self.state_buffer.append(observation)
-        return torch.stack(list(self.state_buffer), 0), reward, done, info
-    
-    def step6(self, action):
+    def step(self, action, simple_action=False, render=False):
         frame_buffer = torch.zeros(2, 84, 84, device=self.device)
-        mda_action = self.action6_to_mda(action)
-        return self._step(self.mda_to_discrete(mda_action), frame_buffer)
-    
-    def rendered_step6(self, action):
-        frame_buffer = torch.zeros(2, 84, 84, device=self.device)
-        mda_action = self.action6_to_mda(action)
-        return self._rendered_step(self.mda_to_discrete(mda_action), frame_buffer)
-    
-    def step(self, action):
-        frame_buffer = torch.zeros(2, 84, 84, device=self.device)
-        mda_action = self.action_to_mda(action)
-        return self._step(self.mda_to_discrete(mda_action), frame_buffer)
+        mda_action = self.action_to_mda(action, simple_action)
+        return self._step(self.mda_to_discrete(mda_action), frame_buffer, render)
     
     def _process_observation(self, observation):
         observation = observation.squeeze()
