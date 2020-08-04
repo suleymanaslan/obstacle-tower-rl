@@ -97,7 +97,7 @@ class ObstacleTowerEnv(Env):
         self.turn_dict = {0:"No-Op", 1:"Right", 2:"Left"}
     
     def _get_env(self):
-        return ObstacleTower(retro=True, realtime_mode=False, greyscale=True)
+        return ObstacleTower(f"obstacle-tower-env/obstacletower_v4.0_windows/ObstacleTower", retro=True, realtime_mode=False, greyscale=True)
     
     def seed(self, seed):
         self.wrapped_env.seed(seed)
@@ -105,7 +105,7 @@ class ObstacleTowerEnv(Env):
     def floor(self, floor):
         self.wrapped_env.floor(floor)
     
-    def action_to_mda(self, action, simple_action=False):
+    def action_to_mda(self, action, simple_action=True):
         if simple_action:
             movement = action // 3
             cam_rot = action % 3
@@ -129,8 +129,9 @@ class ObstacleTowerEnv(Env):
     
     def step(self, action, simple_action=False, render=False):
         frame_buffer = torch.zeros(2, 84, 84, device=self.device)
-        mda_action = self.action_to_mda(action, simple_action)
-        return self._step(self.mda_to_discrete(mda_action), frame_buffer, render)
+        if simple_action:
+            action = self.mda_to_discrete(self.action_to_mda(action))
+        return self._step(action, frame_buffer, render)
     
     def _process_observation(self, observation):
         observation = observation.squeeze()
