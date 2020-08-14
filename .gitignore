@@ -124,6 +124,8 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
+.tmp.drivedownload
+
 .idea/
 obstacle-tower-env/
 trained_models/
